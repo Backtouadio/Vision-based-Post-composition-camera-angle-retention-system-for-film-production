@@ -1,0 +1,28 @@
+Conversión de Solid Edge en STL
+Fecha: lunes,agosto 31,2026 11:30
+Archivo fuente:D:\Escritorio_data1\Escritorio_data\AaUNIVERSIDAD\4th year\TFG\PROYECTO\CAD\nanocase_agujeros\stp_separados\nanocase_arriba\tapa.par
+Sistema fuente: SOLID EDGE
+
+Hardware:
+Procesador: AMD Ryzen 5 3500U with Radeon Vega Mobile Gfx  
+Sistema operativo: Windows 10
+Memoria instalada: 6,93 GB
+
+Información sobre el software:
+Versión de Parasolid: 37.0.118
+Versión de PSBodyShop: 37.0.94
+Versión del adaptador STL: 15.0.142
+Versión de Solid Edge: 225.00.01.004 x64
+
+Opciones de exportación de STL:
+Formato de la carpeta de salida:BINARY
+Exportar las piezas visualizadas: Desactivado
+Opción estructural: Monolithic
+Unidades de exportación: Inch
+Valor de la tolerancia de exportación:0,050000
+Tipo de tolerancia de exportación: Custom
+Valor del ángulo plano de superficie de exportación:0,523599
+
+Avance en la conversión:
+Se completó el proceso de conversión
+Tiempo necesario para convertir:00 : 00 : 00

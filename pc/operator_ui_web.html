@@ -1,0 +1,1125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Framing Instrument</title>
+
+<style>
+/* ------------------------------------------------------------------
+   Indexed 7-entry palette over a low-resolution pixel buffer, scaled
+   with nearest-neighbor: there is not a single antialiased line on
+   the page.
+
+   The background is monochrome on purpose and colour is reserved
+   ENTIRELY for the three rotation axes, so anything coloured is a
+   turn order and nothing else:
+     magenta = PITCH (X axis)   lime = YAW (Y axis)   cyan = ROLL (Z axis)
+   (3D gizmo convention: X/Y/Z <-> R/G/B)
+
+   The channel is still encoded by SHAPE, which is information that
+   colour can no longer carry:
+     solid line  = leveling (IMU: roll, pitch)
+     dashed line = framing  (vision: yaw, translation, zoom)
+   ------------------------------------------------------------------ */
+:root{ --k:#000; --w:#fff; }
+
+html,body{height:100%}
+body{
+  margin:0; background:var(--k); color:var(--w);
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  overflow:hidden;
+}
+
+#screen{
+  display:block; position:fixed; inset:0;
+  width:100%; height:100%;
+  image-rendering:pixelated; image-rendering:crisp-edges;
+  background:var(--k);
+}
+
+/* ---- control drawer: development scaffolding, not instrument ------ */
+
+#panel{
+  position:fixed; left:0; bottom:0; z-index:2;
+  width:min(430px,100%); max-height:78vh; overflow:auto;
+  background:var(--k); color:var(--w);
+  border-top:2px solid var(--w); border-right:2px solid var(--w);
+  padding:12px 14px 14px;
+  font-size:11px; line-height:1.7; letter-spacing:.06em;
+}
+#panel[hidden]{display:none}
+#panel h2{
+  font-size:11px; margin:0 0 10px; letter-spacing:.18em; font-weight:700;
+  border-bottom:2px solid var(--w); padding-bottom:6px;
+}
+.sl{display:grid;grid-template-columns:52px 1fr 62px;align-items:center;gap:8px;margin:5px 0}
+.sl b{font-weight:400}
+.sl output{text-align:right}
+.sl.vis b::after{content:" ---";letter-spacing:-.1em}  /* dashes = vision */
+
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:14px;background:transparent;cursor:pointer;
+}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--w)}
+input[type=range]::-moz-range-track{height:2px;background:var(--w)}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:9px;height:13px;margin-top:-5.5px;
+  background:var(--w);border:none;border-radius:0;
+}
+input[type=range]::-moz-range-thumb{width:9px;height:13px;background:var(--w);border:none;border-radius:0}
+input[type=range]:disabled{opacity:.35}
+input[type=range]:focus-visible{outline:2px solid var(--w);outline-offset:3px}
+
+#panel .btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+#panel button{
+  font:inherit;letter-spacing:.1em;text-transform:uppercase;
+  padding:5px 9px;background:var(--k);color:var(--w);
+  border:2px solid var(--w);border-radius:0;cursor:pointer;
+}
+#panel button[aria-pressed=true]{background:var(--w);color:var(--k)}
+#panel button:focus-visible{outline:2px solid var(--w);outline-offset:2px}
+#panel p{margin:10px 0 0;opacity:.75;letter-spacing:.04em;line-height:1.65}
+#panel kbd{border:1px solid var(--w);padding:0 3px;font:inherit}
+/* ---- MENU layer: DOM on top of the canvas -------------------------
+   The menus are NOT drawn into the framebuffer: the instrument's
+   typeface is a 3x5 bitmap with no text field, and a dropdown in
+   there would mean writing a toolkit. Canvas for the instrument,
+   DOM for the paperwork; each to its own.
+   Which screen you see is decided by the PACKET's `state`, never by
+   the click: the button does not change screen, the Pi changes state. */
+#ui{
+  position:fixed; inset:0; z-index:5; display:none;
+  align-items:center; justify-content:center;
+  background:rgba(0,0,0,.88);
+  font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+}
+#ui.on{display:flex}
+.caja{
+  border:2px solid var(--w); background:var(--k);
+  padding:16px 18px; min-width:min(340px,88vw); max-width:min(560px,92vw);
+  max-height:86vh; overflow:auto;
+}
+.caja[hidden]{display:none}
+.caja h2{font-size:12px;margin:0 0 12px;letter-spacing:.2em;
+  border-bottom:2px solid var(--w);padding-bottom:7px}
+.caja button{
+  font:inherit;text-transform:uppercase;letter-spacing:.1em;
+  background:var(--k);color:var(--w);border:2px solid var(--w);
+  padding:9px 10px;cursor:pointer;width:100%;margin:5px 0}
+.caja button:hover,.caja button:focus{background:var(--w);color:var(--k);outline:none}
+.caja button.sec{padding:6px 8px;font-size:11px}
+.fila{display:grid;grid-template-columns:64px 1fr;gap:10px;align-items:center;margin:7px 0}
+.fila input{font:inherit;background:var(--k);color:var(--w);
+  border:2px solid var(--w);padding:6px 7px;width:100%;text-transform:uppercase}
+.cuenta{font-size:64px;text-align:center;margin:14px 0;line-height:1}
+.parp{animation:parp 1s steps(2,end) infinite}
+@keyframes parp{50%{opacity:0}}
+.plano{display:grid;grid-template-columns:64px 1fr auto;gap:10px;
+  align-items:center;border:2px solid var(--w);padding:7px;margin:7px 0}
+.plano img{width:64px;height:48px;object-fit:cover;image-rendering:pixelated;
+  background:#111;display:block}
+.plano b{font-weight:400;letter-spacing:.12em}
+.aviso{border:2px solid var(--w);padding:9px;margin:0 0 12px;font-size:11px;
+  background:var(--w);color:var(--k);letter-spacing:.1em;line-height:1.5}
+.aviso[hidden]{display:none}
+.plano .acc{display:flex;gap:5px}
+.plano .acc button{width:auto;margin:0;padding:5px 7px;font-size:10px}
+.plano input{font:inherit;font-size:11px;background:var(--k);color:var(--w);
+  border:2px solid var(--w);padding:3px 4px;width:52px;text-transform:uppercase}
+.nota{opacity:.65;font-size:10px;letter-spacing:.06em;text-transform:none;margin:8px 0 0}
+@media (prefers-reduced-motion:reduce){.parp{animation:none}}
+</style>
+</head>
+<body>
+<canvas id="screen" aria-label="Framing instrument"></canvas>
+
+<!-- ================= MENUS (DOM layer over the canvas) ================= -->
+<div id="ui">
+  <div id="m-main" class="caja" hidden>
+    <h2>Framing system</h2>
+    <div class="aviso" id="m-aviso" hidden></div>
+    <button id="b-cap">Capture reference</button>
+    <button id="b-planos">Saved shots</button>
+    <div class="fila" style="margin-top:14px">
+      <label for="pi-url">PI</label>
+      <input id="pi-url" placeholder="192.168.1.33:8081" spellcheck="false">
+    </div>
+    <p class="nota" id="pi-est">not checked</p>
+    <p class="nota" id="pi-ruta"></p>
+  </div>
+
+  <div id="m-cap" class="caja" hidden>
+    <h2>[ Pi terminal ]</h2>
+    <p class="parp">Hold the framing and do not move</p>
+    <div class="cuenta" id="cuenta">3</div>
+    <p class="nota">The photo and the tilt are taken in the same pose.</p>
+  </div>
+
+  <div id="m-nom" class="caja" hidden>
+    <h2>Name the shot</h2>
+    <div class="fila"><label for="n-esc">Scene</label>
+      <input id="n-esc" list="d-esc" value="1"><datalist id="d-esc"></datalist></div>
+    <div class="fila"><label for="n-sec">Sequence</label>
+      <input id="n-sec" list="d-sec" value="A"><datalist id="d-sec"></datalist></div>
+    <div class="fila"><label for="n-pla">Shot</label>
+      <input id="n-pla" list="d-pla" value="1"><datalist id="d-pla"></datalist></div>
+    <p class="nota" id="n-arch">S1_A_1.png</p>
+    <button id="b-guardar">Save</button>
+    <button id="b-retry" class="sec">Retake</button>
+    <button id="b-desc" class="sec">Discard</button>
+  </div>
+
+  <div id="m-planos" class="caja" hidden>
+    <h2>Saved shots</h2>
+    <div id="lista"></div>
+    <p class="nota" id="lista-ruta"></p>
+    <button id="b-volver" class="sec">Back</button>
+  </div>
+</div>
+
+<div id="panel" hidden>
+  <h2>CONTROLS · SIMULATED TELEMETRY</h2>
+  <div id="sliders">
+    <div class="sl vis"><b>DX</b><input type="range" id="sDx" min="-320" max="320" step="1" value="-140"><output id="oDx"></output></div>
+    <div class="sl vis"><b>DY</b><input type="range" id="sDy" min="-320" max="320" step="1" value="95"><output id="oDy"></output></div>
+    <div class="sl vis"><b>YAW</b><input type="range" id="sYaw" min="-12" max="12" step="0.05" value="-3"><output id="oYaw"></output></div>
+    <div class="sl"><b>PITCH</b><input type="range" id="sPitch" min="-20" max="20" step="0.05" value="5"><output id="oPitch"></output></div>
+    <div class="sl"><b>ROLL</b><input type="range" id="sRoll" min="-40" max="40" step="0.05" value="-9"><output id="oRoll"></output></div>
+    <div class="sl vis"><b>ZOOM</b><input type="range" id="sZoom" min="-30" max="30" step="0.5" value="-7"><output id="oZoom"></output></div>
+  </div>
+  <div class="btns">
+    <button id="bRun" aria-pressed="false">Session</button>
+    <button id="bLost" aria-pressed="false">No vision</button>
+    <button id="bFreeze" aria-pressed="false">No link</button>
+    <button id="bZero">Zero</button>
+  </div>
+  <p>
+    <kbd>C</kbd> controls · <kbd>F</kbd> shape (ball / reticle) ·
+    <kbd>G</kbd> grid · <kbd>+</kbd> <kbd>-</kbd> pixel size
+  </p>
+  <p>
+    The ball IS YOU: it is where you are, not where you have to go. Bring it
+    to the centre. The packet still sends orders (move right = +x); the
+    inversion for drawing happens in a single place, marked in the code.
+  </p>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ==================================================================
+   POLARITY — the only place where a turn direction is decided.
+   Not verified against hardware (IMU_RECONCILIATION_GUIDE, task 3).
+   ================================================================== */
+const SIGN = { pitch: +1, yaw: +1, roll: +1 };
+
+/* ==================================================================
+   THE INVERSION. Here and nowhere else.
+
+   The packet carries ORDERS: move_x_px > 0 = "move the camera to the
+   right". If you are told to go right it is because you are to the
+   LEFT of the target. Since the ball represents WHERE YOU ARE, it is
+   drawn at -move. That way the ball moves like your camera (like a
+   cursor) and you bring it to the centre.
+   ================================================================== */
+const POS = -1;
+
+const DEG = Math.PI / 180;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const $ = id => document.getElementById(id);
+
+const RANGE_PX = 300;   // image px that fit in the short half-side
+let PIXEL = 4;          // logical pixel size, + / - keys
+let SHOW_GRID = true;
+let FORM = "ball";      // "ball" = circle + 3 arrows | "ret" = reticle + 3 arrows
+
+/* ================================================================== *
+ *  1 BIT BUFFER                                                      *
+ * ================================================================== */
+let W = 0, H = 0, buf = null, img = null, octx = null, off = null;
+
+function resize() {
+  const cv = $("screen");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cw = Math.max(240, Math.floor(cv.clientWidth));
+  const ch = Math.max(200, Math.floor(cv.clientHeight));
+  cv.width = Math.floor(cw * dpr); cv.height = Math.floor(ch * dpr);
+  W = Math.max(80, Math.floor(cw / PIXEL));
+  H = Math.max(60, Math.floor(ch / PIXEL));
+  if (!off) { off = document.createElement("canvas"); octx = off.getContext("2d"); }
+  off.width = W; off.height = H;
+  img = octx.createImageData(W, H);
+  buf = new Uint8Array(W * H);
+}
+
+/* Palette. The index is stored in the buffer; colour only exists at flush. */
+const PAL = [
+  [  0,   0,   0],   // 0 background
+  [255, 255, 255],   // 1 ink
+  [104, 104, 104],   // 2 map dots
+  [ 56,  56,  56],   // 3 axes: dimmer than the dots. On a pixel grid there
+                     //   is nothing FINER than 1 px, so the feeling of
+                     //   fineness is achieved by lowering the brightness.
+  [166, 255,  46],   // 4 lime    -> YAW   (Y axis)
+  [255,  45, 200],   // 5 magenta -> PITCH (X axis)
+  [ 45, 226, 255],   // 6 cyan    -> ROLL  (Z axis)
+];
+const C_INK = 1, C_DOT = 2, C_AXIS = 3, C_YAW = 4, C_PITCH = 5, C_ROLL = 6;
+
+let PEN = C_INK;
+const px = (x, y, c) => {
+  x |= 0; y |= 0;
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  buf[y * W + x] = (c === undefined ? PEN : c) | 0;
+};
+const clearBuf = () => buf.fill(0);
+
+function line(x0, y0, x1, y1, dash, gap) {
+  x0 |= 0; y0 |= 0; x1 |= 0; y1 |= 0;
+  const off = gap === undefined ? dash : gap;      // asymmetric pattern
+  const per = dash + off;
+  const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+  const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy, n = 0;
+  for (;;) {
+    if (!dash || (n % per) < dash) px(x0, y0, PEN);
+    n++;
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+function circle(cx, cy, r, dash) {
+  let x = r, y = 0, err = 1 - r, n = 0;
+  const put = (a, b) => { if (!dash || (n % (dash * 2)) < dash) px(a, b, PEN); n++; };
+  while (x >= y) {
+    put(cx + x, cy + y); put(cx + y, cy + x); put(cx - y, cy + x); put(cx - x, cy + y);
+    put(cx - x, cy - y); put(cx - y, cy - x); put(cx + y, cy - x); put(cx + x, cy - y);
+    y++;
+    if (err < 0) err += 2 * y + 1; else { x--; err += 2 * (y - x) + 1; }
+  }
+}
+
+function box(x, y, w, h) {
+  line(x, y, x + w, y); line(x, y + h, x + w, y + h);
+  line(x, y, x, y + h); line(x + w, y, x + w, y + h);
+}
+function fill(x, y, w, h, on) {
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) px(x + i, y + j, on);
+}
+
+function disc(cx, cy, r, on) {
+  for (let y = -r; y <= r; y++) {
+    const w = Math.floor(Math.sqrt(r * r - y * y));
+    for (let x = -w; x <= w; x++) px(cx + x, cy + y, on);
+  }
+}
+/* plate: clears the background under a text so the grid does not dirty it */
+function plate(x, y, w, h) { fill(x - 2, y - 2, w + 4, h + 4, 0); }
+
+/* corners of a box — more legible in 1 bit than the whole frame */
+function corners(cx, cy, half, len) {
+  const x0 = cx - half, x1 = cx + half, y0 = cy - half, y1 = cy + half;
+  line(x0, y0, x0 + len, y0); line(x0, y0, x0, y0 + len);
+  line(x1, y0, x1 - len, y0); line(x1, y0, x1, y0 + len);
+  line(x0, y1, x0 + len, y1); line(x0, y1, x0, y1 - len);
+  line(x1, y1, x1 - len, y1); line(x1, y1, x1, y1 - len);
+}
+
+/* arc: a0 and a1 in radians, direction given by a1>a0 */
+function arc(cx, cy, r, a0, a1, dash) {
+  const steps = Math.max(6, Math.round(Math.abs(a1 - a0) * r * 1.6));
+  let n = 0;
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + (a1 - a0) * (i / steps);
+    if (!dash || (n % (dash * 2)) < dash) px(cx + Math.cos(a) * r, cy - Math.sin(a) * r, PEN);
+    n++;
+  }
+}
+
+/* Lens: circle + handle, with + / - inside. sign 0 = empty lens.
+   Replaces the scale ring, which nobody understood without being told. */
+function lens(cx, cy, r, sign) {
+  circle(cx, cy, r);
+  const d = Math.round(r * 0.72);
+  line(cx + d, cy + d, cx + d + r, cy + d + r);          // handle, 2 px wide
+  line(cx + d + 1, cy + d, cx + d + r + 1, cy + d + r);
+  if (!sign) return;
+  const h = Math.max(1, r - 3);
+  line(cx - h, cy, cx + h, cy);
+  if (sign > 0) line(cx, cy - h, cx, cy + h);
+}
+
+/* solid arrow head, 5 px long */
+function head(x, y, ang) {
+  for (let i = 0; i < 5; i++) {
+    const bx = x - Math.cos(ang) * i, by = y + Math.sin(ang) * i;
+    const w = Math.round(i * 0.62);
+    for (let j = -w; j <= w; j++) px(bx - Math.sin(ang) * j, by - Math.cos(ang) * j, PEN);
+  }
+}
+
+/* ---------------------------------------------------- 3x5 typeface */
+const F = {
+  A:[7,5,7,5,5], B:[6,5,6,5,6], C:[3,4,4,4,3], D:[6,5,5,5,6], E:[7,4,7,4,7],
+  F:[7,4,7,4,4], G:[3,4,5,5,3], H:[5,5,7,5,5], I:[7,2,2,2,7], J:[1,1,1,5,2],
+  K:[5,5,6,5,5], L:[4,4,4,4,7], M:[5,7,7,5,5], N:[6,5,5,5,5], O:[2,5,5,5,2],
+  P:[6,5,6,4,4], Q:[2,5,5,3,1], R:[6,5,6,5,5], S:[3,4,2,1,6], T:[7,2,2,2,2],
+  U:[5,5,5,5,3], V:[5,5,5,5,2], W:[5,5,7,7,5], X:[5,5,2,5,5], Y:[5,5,2,2,2],
+  Z:[7,1,2,4,7],
+  "0":[7,5,5,5,7], "1":[2,6,2,2,7], "2":[7,1,7,4,7], "3":[7,1,7,1,7], "4":[5,5,7,1,1],
+  "5":[7,4,7,1,7], "6":[7,4,7,5,7], "7":[7,1,1,1,1], "8":[7,5,7,5,7], "9":[7,5,7,1,7],
+  "-":[0,0,7,0,0], "+":[0,2,7,2,0], ".":[0,0,0,0,2], ":":[0,2,0,2,0], "/":[1,1,2,4,4],
+  "%":[5,1,2,4,5], "<":[1,2,4,2,1], ">":[4,2,1,2,4], "[":[3,2,2,2,3], "]":[6,2,2,2,6],
+  "*":[0,5,2,5,0], "=":[0,7,0,7,0], "?":[6,1,2,0,2], "!":[2,2,2,0,2], " ":[0,0,0,0,0],
+};
+function text(s, x, y) {
+  s = String(s).toUpperCase();
+  let cx = x | 0;
+  for (const ch of s) {
+    const g = F[ch];
+    if (g) for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++)
+      if (g[r] & (1 << (2 - c))) px(cx + c, y + r, PEN);
+    cx += 4;
+  }
+  return cx;
+}
+const tw = s => String(s).length * 4 - 1;
+function textR(s, x, y) { text(s, x - tw(s), y); }
+
+function flip(s, x, y, padx = 2) {          // text in negative
+  const w = tw(s) + padx * 2, h = 9;
+  fill(x, y, w, h, 1);
+  const s2 = String(s).toUpperCase();
+  let cx = x + padx;
+  for (const ch of s2) {
+    const g = F[ch];
+    if (g) for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++)
+      if (g[r] & (1 << (2 - c))) px(cx + c, y + 2 + r, 0);
+    cx += 4;
+  }
+  return w;
+}
+
+/* ================================================================== *
+ *  STATE                                                             *
+ * ================================================================== */
+const S = {
+  moveX: null, moveY: null, yaw: null, pitch: null, roll: null, zoom: null,
+  valid: [], state: "SEARCH", locked: false, seq: 0,
+  tol: { trans_px: 8, yaw_deg: .5, pitch_deg: 1.5, roll_deg: 1.5, zoom_pct: 2 },
+  diag: {}, tLast: 0, live: false, raw: null,
+};
+const D = { moveX: 0, moveY: 0, yaw: 0, pitch: 0, roll: 0, zoom: 0 };
+const TAU = 0.170;      /* SCREEN smoothing. Never on the Pi: there it would
+                           add delay to the real loop. Raised from 0.080 to
+                           0.170 s — the instrument was shaking at the rhythm
+                           of the operator's pulse and could not be followed. */
+
+/* 20 % hysteresis + 400 ms dwell. Without this, with a hand-held roll sigma
+   of 0.482° any threshold flickers several times per second. */
+const gates = {};
+function onTarget(key, err, tol) {
+  const g = gates[key] || (gates[key] = { on: false, since: 0 });
+  if (err === null || !isFinite(err)) { g.on = false; g.since = 0; return false; }
+  const want = g.on ? err <= tol * 1.2 : err <= tol * 0.8;
+  const now = performance.now();
+  if (want !== g.on) {
+    if (!g.since) g.since = now;
+    else if (now - g.since > 400) { g.on = want; g.since = 0; }
+  } else g.since = 0;
+  return g.on;
+}
+
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let blink = true;
+
+/* ================================================================== *
+ *  THE SCREEN IS THE MAP                                             *
+ * ================================================================== */
+function drawScreen() {
+  clearBuf();
+  const cx = W >> 1, cy = H >> 1;
+  const margin = 16;
+  const k = (Math.min(W, H) / 2 - margin) / RANGE_PX;   // logical px per image px
+
+  const hasT = S.moveX !== null && S.moveY !== null;
+  const magT = hasT ? Math.hypot(S.moveX, S.moveY) : null;
+  const okT = onTarget("trans", magT, S.tol.trans_px);
+
+  /* ---- grid: one dot every 20 logical px (was every 10) ---------- */
+  if (SHOW_GRID) {
+    for (let y = cy % 20; y < H; y += 20)
+      for (let x = cx % 20; x < W; x += 20) px(x, y, C_DOT);
+  }
+
+  /* ---- axes: simple stroke 1 on / 3 off, and dimmer than the dots,
+     which is the only way to make them look finer. */
+  PEN = C_AXIS;
+  line(0, cy, W, cy, 1, 3); line(cx, 0, cx, H, 1, 3);
+  PEN = C_INK;
+
+  /* ---- target: the tolerance box -------------------------------- */
+  const half = Math.max(5, Math.round(S.tol.trans_px * k));
+  if (okT) { fill(cx - half, cy - half, half * 2 + 1, half * 2 + 1, 1); }
+  else { corners(cx, cy, half, Math.max(3, (half / 2) | 0)); px(cx, cy, 1); }
+
+  /* ---- ball position: WHERE YOU ARE (see POS above) -------------- */
+  const bxRaw = cx + POS * D.moveX * k;
+  const byRaw = cy - POS * D.moveY * k;          // +move_y = up
+  /* Asymmetric margins. The lens hangs below and the HUD text band is there:
+     without this extra margin, on short screens the HUD plates erased half
+     the lens. */
+  const insetX = 26, insetT = 26, insetB = 58;
+  const bx = clamp(bxRaw, insetX, W - insetX), by = clamp(byRaw, insetT, H - insetB);
+  const clamped = bxRaw !== bx || byRaw !== by;
+
+  /* ---- tether towards the centre: the way back.
+     Solid and without a head: the direction is already given by the ball's
+     position, and one more head on screen competed with the three rotation ones. */
+  if (hasT && !okT) {
+    const dx = cx - bx, dy = cy - by, d = Math.hypot(dx, dy);
+    if (d > half + 14) {
+      const ux = dx / d, uy = dy / d;
+      line(bx + ux * 15, by + uy * 15, cx - ux * (half + 3), cy - uy * (half + 3));
+    }
+  }
+
+  /* ---- HUD first and the gyro ON TOP. The HUD plates erase the background
+     so the text can be read, and if they were drawn afterwards they would eat
+     half the lens when the ball goes down. Between the number and the
+     instrument, the instrument wins. -------------------------------- */
+  drawHud(okT);
+
+  /* ---- the gyro. It is ALWAYS drawn: even if vision is lost, the IMU's
+     roll and pitch are still valid and useful. What changes is the body's
+     stroke, which becomes dashed. --------------------------------- */
+  drawGyro(bx, by, hasT, clamped);
+}
+
+/* ------------------------------------------------------------------ *
+ *  GYRO: circle + 3 arrows  /  reticle + 3 arrows
+ *  It goes OVER the map and travels with it. The three arrows say which
+ *  way to turn; the inner cross says where you are aiming.
+ * ------------------------------------------------------------------ */
+function drawGyro(bx, by, hasT, clamped) {
+  bx = Math.round(bx); by = Math.round(by);
+  /* The body scales with the logical screen: with a big pixel or a short
+     window, a fixed radius did not fit. */
+  const R = FORM === "ball"
+    ? Math.round(clamp(Math.min(W, H) * 0.115, 11, 20))
+    : Math.round(clamp(Math.min(W, H) * 0.086, 8, 15));
+
+  const hasR = S.roll !== null, hasP = S.pitch !== null, hasY = S.yaw !== null;
+  const okR = onTarget("roll", hasR ? Math.abs(S.roll) : null, S.tol.roll_deg);
+  const okP = onTarget("pitch", hasP ? Math.abs(S.pitch) : null, S.tol.pitch_deg);
+  const okY = onTarget("yaw", hasY ? Math.abs(S.yaw) : null, S.tol.yaw_deg);
+
+  /* The ball shows your CURRENT attitude, which is MINUS the correction. And
+     the roll_deg order is CLOCKWISE-positive while the drawing angle is
+     COUNTERCLOCKWISE-positive. The two inversions cancel out: rot = +roll. */
+  const rot = D.roll * DEG * SIGN.roll;
+  const aimLim = FORM === "ball" ? 6 : 5;   // the cross never leaves the body
+  const aimX = clamp(POS * D.yaw * SIGN.yaw * 1.5, -aimLim, aimLim);
+  const aimY = clamp(-POS * D.pitch * SIGN.pitch * 1.5, -aimLim, aimLim);
+
+  /* gap in the grid: the instrument has to lift off the map */
+  disc(bx, by, R + 2, 0);
+
+  /* AT THE CENTRE -> solid body and everything inside in black. In 1 bit there
+     is no stronger signal than inverting, and it replaces the green colour. */
+  const inv = onTarget("trans", hasT ? Math.hypot(S.moveX, S.moveY) : null, S.tol.trans_px);
+  if (inv) disc(bx, by, R, 1);
+  else if (FORM === "ball") circle(bx, by, R, hasT ? 0 : 2);  // dashed = no vision
+
+  /* Scale: a LENS below the body.
+       +  the reference is BIGGER than what you see  -> get closer
+       -  the reference is smaller                   -> back off
+       empty lens -> you are already at the right distance
+     The lens size grows with the error. Below is the only free anchor:
+     P is above, Y is at the sides, and R takes the edge.
+     It stays WHITE: colour is reserved for the rotation axes. */
+  if (S.zoom !== null && isFinite(S.zoom)) {
+    const okZ = onTarget("zoom", Math.abs(S.zoom), S.tol.zoom_pct);
+    const magZ = Math.abs(S.zoom) / S.tol.zoom_pct;
+    const lr = okZ ? 4 : Math.round(clamp(4 + Math.sqrt(magZ) * 1.0, 4, 7));
+    lens(bx, by + R + 12 + lr, lr, okZ ? 0 : (S.zoom > 0 ? 1 : -1));
+  }
+
+  /* attitude cross: turns with roll, shifts with yaw/pitch */
+  if (inv) PEN = 0;                    // cross in black over the solid body
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const L = FORM === "ball" ? R - 8 : R;
+  const ox = bx + aimX, oy = by + aimY;
+  line(ox - c * L, oy + s * L, ox + c * L, oy - s * L);          // horizon
+  line(ox + s * (L * .6), oy + c * (L * .6), ox - s * (L * .6), oy - c * (L * .6));
+  fill(ox - 1, oy - 1, 3, 3, PEN);
+
+  PEN = 1;
+  if (clamped && (blink || reduceMotion)) box(bx - R - 3, by - R - 3, R * 2 + 6, R * 2 + 6);
+  if (!hasT) {                       // no lens in the way: the scale is lost too
+    const yv = by + R + 24;          // below the reach of the roll arc
+    plate(bx - 19, yv, tw("NO VISION"), 5); text("NO VISION", bx - 19, yv);
+  }
+
+  /* Colour = axis, with the 3D gizmo convention (X/Y/Z <-> R/G/B).
+     Within tolerance the marker turns WHITE: "done" is not one more axis. */
+  if (hasP) arrowStraight(bx, by, R, S.pitch, S.tol.pitch_deg, okP, "P", true, C_PITCH);
+  if (hasY) arrowStraight(bx, by, R, S.yaw, S.tol.yaw_deg, okY, "Y", false, C_YAW);
+  if (hasR) arrowRoll(bx, by, R, S.roll, S.tol.roll_deg, okR, C_ROLL);
+}
+
+function magLen(err, tol) {
+  return Math.round(clamp(5 + 9 * Math.sqrt(Math.abs(err) / tol), 6, 22));
+}
+
+/* vertical = pitch (IMU, solid) · horizontal = yaw (vision, dashed) */
+function arrowStraight(bx, by, R, err, tol, ok, tag, vertical, col) {
+  PEN = ok ? C_INK : col;
+  const dash = vertical ? 0 : 2;
+  const sgn = Math.sign(err) * (vertical ? SIGN.pitch : SIGN.yaw) || 1;
+  const gap = R + 4;
+  if (ok) {
+    const x = vertical ? bx : bx + gap + 2, y = vertical ? by - gap - 2 : by;
+    fill(x - 1, y - 1, 3, 3, 1);
+    text(tag, vertical ? x + 4 : x - 1, vertical ? y - 2 : y + 4);
+    PEN = C_INK; return;
+  }
+  const L = magLen(err, tol);
+  if (vertical) {
+    const dir = sgn > 0 ? -1 : 1;                   // +pitch = aim further UP
+    const y0 = by + dir * gap, y1 = y0 + dir * L;
+    line(bx, y0, bx, y1, dash);
+    head(bx, y1, dir < 0 ? Math.PI / 2 : -Math.PI / 2);
+    text(tag, bx + 4, y1 - 2);
+  } else {
+    const dir = sgn > 0 ? 1 : -1;                   // +yaw = pan to the RIGHT
+    const x0 = bx + dir * gap, x1 = x0 + dir * L;
+    line(x0, by, x1, by, dash);
+    head(x1, by, dir > 0 ? 0 : Math.PI);
+    text(tag, x1 - 1, by + 4);
+  }
+  PEN = C_INK;
+}
+
+function arrowRoll(bx, by, R, err, tol, ok, col) {
+  PEN = ok ? C_INK : col;
+  const r = R + 7;
+  if (ok) { fill(bx - r - 1, by - 1, 3, 3, PEN); text("R", bx - r - 1, by + 4);
+            PEN = C_INK; return; }
+  const sweep = clamp(Math.sqrt(Math.abs(err) / tol) * .5, .35, 2.2);
+  /* positive roll_deg = turn CLOCKWISE = decreasing drawing angle */
+  const dir = -Math.sign(err) * SIGN.roll || 1;
+  const a0 = Math.PI * 0.98;                        // starts on the left
+  const a1 = a0 + dir * sweep;
+  arc(bx, by, r, a0, a1);
+  /* tangent at a1: the head points along the direction of travel */
+  head(bx + Math.cos(a1) * r, by - Math.sin(a1) * r,
+       Math.atan2(dir * Math.cos(a1), -dir * Math.sin(a1)));
+  text("R", bx + Math.cos(a1) * (r + 8) - 1, by - Math.sin(a1) * (r + 8) - 2);
+  PEN = C_INK;
+}
+
+/* ------------------------------------------------------------------ *
+ *  HUD — four corners, 3x5 typeface. Nothing else.
+ * ------------------------------------------------------------------ */
+/* Zoom is written as an ORDER, not as a raw number: a loose ratio reads
+   like a state and is interpreted backwards half the time. */
+/* Ephemeral message OVER the canvas. It exists because all the command
+   feedback was written in the menu, which is HIDDEN exactly when you are
+   guiding: you pressed a key, it failed, and nobody found out. In negative,
+   which is the strongest signal there is in 1 bit. */
+const MSG = { s: "", t: 0 };
+function avisoPantalla(t) { MSG.s = String(t || ""); MSG.t = performance.now(); }
+
+function zoomText(z) {
+  if (z === null || !isFinite(z)) return "ZOOM --";
+  if (Math.abs(z) <= S.tol.zoom_pct) return "ZOOM OK";
+  return (z > 0 ? "CLOSER " : "BACK ") + Math.abs(z).toFixed(0) + "%";
+}
+
+const n1 = (v, d = 2) => v === null || !isFinite(v) ? "--" : (v >= 0 ? "+" : "-") + Math.abs(v).toFixed(d);
+
+/* ------------------------------------------------------------------
+   The numbers are frozen and only refreshed 5 times per second, and
+   they are read from the ALREADY SMOOTHED values (D), not from the raw
+   ones. At 30 Hz over data with a roll sigma of 0.482 degrees the text
+   is unreadable: the three digits change every frame. This is screen
+   make-up and does not touch the real loop, just like the smoothing.
+   ------------------------------------------------------------------ */
+const HUD = { t: 0, state: "SEARCH", locked: false, seq: 0, age: 9e9, stale: true,
+              dx: null, dy: null, roll: null, pitch: null, yaw: null,
+              zoom: null, dist: null };
+const HUD_MS = 200;
+
+function sampleHud(now) {
+  if (now - HUD.t < HUD_MS) return;
+  HUD.t = now;
+  const has = S.moveX !== null && S.moveY !== null;
+  HUD.state = S.state; HUD.locked = S.locked; HUD.seq = S.seq;
+  HUD.age = S.tLast ? now - S.tLast : 9e9;
+  HUD.stale = HUD.age > 400;
+  HUD.dx = has ? D.moveX : null;
+  HUD.dy = has ? D.moveY : null;
+  HUD.dist = has ? Math.hypot(D.moveX, D.moveY) : null;
+  HUD.roll = S.roll === null ? null : D.roll;
+  HUD.pitch = S.pitch === null ? null : D.pitch;
+  HUD.yaw = S.yaw === null ? null : D.yaw;
+  HUD.zoom = S.zoom === null ? null : D.zoom;
+}
+
+function drawHud(okT) {
+  const stale = HUD.stale;
+
+  const T = (s, x, y) => { plate(x, y, tw(s), 5); text(s, x, y); };
+  const TR = (s, x, y) => { plate(x - tw(s), y, tw(s), 5); text(s, x - tw(s), y); };
+
+  /* top left: the state, in its box */
+  const sw = tw(HUD.state) + 8;
+  plate(3, 3, sw, 13);
+  box(3, 3, sw, 13);
+  text(HUD.state, 7, 7);
+  if (HUD.locked) { plate(3 + sw + 5, 3, tw("LOCKED") + 4, 13); flip("LOCKED", 3 + sw + 5, 5); }
+
+  /* top right: link */
+  if (stale) { if (blink || reduceMotion) TR("NO LINK", W - 4, 8); box(0, 0, W - 1, H - 1); }
+  else TR(Math.round(HUD.age) + "MS  " + HUD.seq, W - 4, 8);
+
+  /* bottom left: the numbers that matter */
+  const y = H - 24;
+  T("DX " + n1(HUD.dx, 0) + "  DY " + n1(HUD.dy, 0), 4, y);
+  T("RO " + n1(HUD.roll) + "  PI " + n1(HUD.pitch) + "  YA " + n1(HUD.yaw), 4, y + 7);
+  T(zoomText(HUD.zoom) + "   DIST " + (HUD.dist === null ? "--" : HUD.dist.toFixed(0)),
+    4, y + 14);
+
+  /* bottom right: reminder of the convention + help */
+  TR(okT ? "ON TARGET" : "BRING BALL TO CENTRE", W - 4, H - 17);
+  TR("[E] MENU  [C] CONTROLS   " + (S.live ? "BRIDGE" : "DEMO"), W - 4, H - 10);
+
+  if (MSG.s && performance.now() - MSG.t < 3500)
+    flip(MSG.s, Math.max(2, (W - tw(MSG.s)) >> 1), H - 34);
+}
+
+/* ================================================================== *
+ *  FLUSH                                                             *
+ * ================================================================== */
+function present() {
+  const d = img.data;
+  for (let i = 0, p = 0; i < buf.length; i++, p += 4) {
+    const c = PAL[buf[i]] || PAL[0];
+    d[p] = c[0]; d[p + 1] = c[1]; d[p + 2] = c[2]; d[p + 3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  const cv = $("screen"), ctx = cv.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(off, 0, 0, W, H, 0, 0, cv.width, cv.height);
+}
+
+/* ================================================================== *
+ *  INPUT                                                             *
+ * ================================================================== */
+let frozen = false, es = null;
+
+function ingest(p) {
+  if (p.type === "meta") return;
+  S.raw = p; S.seq = p.seq ?? 0;
+  S.state = p.state || "SEARCH";
+  S.locked = !!p.locked;
+  S.tol = Object.assign({}, S.tol, p.tol || {});
+  S.diag = p.d || {};
+  const g = p.g || {};
+  /* `valid` RULES. The Pi always sends the six fields, because 0 is the neutral
+     order -- so a field with no measurement arrives as 0.0 and without this
+     line the screen paints it as "you are already there": ball centred and
+     ZOOM OK while the estimator is in SEARCH. Nulled here, everything below
+     already knows how to draw the gap (hasT/hasR/hasP/hasY, "NO VISION", "--").
+     A packet WITHOUT the `valid` key = older than this: it is accepted whole. */
+  const val = g.valid;
+  const ok = k => !val || val.includes(k);
+  const v = (x, k) => (ok(k) && x !== null && x !== undefined ? x : null);
+  S.valid = val || [];
+  S.moveX = v(g.move_x_px, "trans"); S.moveY = v(g.move_y_px, "trans");
+  S.yaw = v(g.yaw_deg, "yaw"); S.pitch = v(g.pitch_deg, "pitch");
+  S.roll = v(g.roll_deg, "roll"); S.zoom = v(g.zoom_pct, "zoom");
+  if (!frozen) S.tLast = performance.now();
+}
+
+function connect() {
+  if (!("EventSource" in window) || location.protocol === "file:") return;
+  try { es = new EventSource("/stream"); } catch (e) { return; }
+  let got = false;
+  es.onmessage = ev => {
+    got = true;
+    if (!S.live) { S.live = true; $("sliders").querySelectorAll("input").forEach(i => i.disabled = true); }
+    try { ingest(JSON.parse(ev.data)); } catch (e) { /* broken packet */ }
+  };
+  es.onerror = () => { if (!got) { es.close(); es = null; return; } S.live = false; };
+}
+
+/* ---- local generator ---------------------------------------------- */
+const sim = { running: false, lost: false, dx: 0, dy: 0, yaw: 0, pitch: 0, roll: 0, z: 0 };
+let seqLocal = 0;
+const gauss = s => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random();
+  return s * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+
+const rd = () => ({ dx: +$("sDx").value, dy: +$("sDy").value, yaw: +$("sYaw").value,
+                    pitch: +$("sPitch").value, roll: +$("sRoll").value, z: +$("sZoom").value });
+function syncOut() {
+  const v = rd();
+  $("oDx").textContent = v.dx; $("oDy").textContent = v.dy;
+  $("oYaw").textContent = v.yaw.toFixed(2); $("oPitch").textContent = v.pitch.toFixed(2);
+  $("oRoll").textContent = v.roll.toFixed(2); $("oZoom").textContent = v.z.toFixed(1) + "%";
+}
+
+function tickLocal() {
+  if (S.live) return;
+  let base;
+  if (sim.running) {
+    const q = 0.972;
+    sim.dx *= q; sim.dy *= q; sim.yaw *= q; sim.pitch *= q; sim.roll *= q; sim.z *= q;
+    base = { dx: sim.dx, dy: sim.dy, yaw: sim.yaw, pitch: sim.pitch, roll: sim.roll, z: sim.z };
+    $("sDx").value = Math.round(sim.dx); $("sDy").value = Math.round(sim.dy);
+    $("sYaw").value = sim.yaw.toFixed(2); $("sPitch").value = sim.pitch.toFixed(2);
+    $("sRoll").value = sim.roll.toFixed(2); $("sZoom").value = sim.z.toFixed(1);
+    syncOut();
+  } else base = rd();
+
+  /* hand tremor: roll sigma 0.482°, measured in imu_bench 2026-08-23 */
+  const tr = sim.lost ? 2.6 : 1;
+  const dx = base.dx + gauss(2 * tr), dy = base.dy + gauss(2 * tr);
+  const roll = base.roll + gauss(.482 * tr), pitch = base.pitch + gauss(.482 * tr);
+  const yaw = base.yaw + gauss(.16 * tr);
+  const m = Math.hypot(dx, dy), vis = !sim.lost;
+  const state = sim.lost ? "LOST" : (m < 45 && Math.abs(yaw) < 1.2) ? "MICROMETRY"
+              : m < 110 ? "LOCK_ON" : "SEARCH";
+  const conf = sim.lost ? .06 : clamp(1 - m / 340, .25, .97);
+
+  ingest({
+    v: 2, seq: ++seqLocal, t_pi: Date.now() / 1000, state,
+    locked: state === "MICROMETRY" && m <= 8 && Math.abs(roll) <= 1.5 && Math.abs(pitch) <= 1.5,
+    g: {
+      move_x_px: vis ? +dx.toFixed(2) : null, move_y_px: vis ? +dy.toFixed(2) : null,
+      yaw_deg: vis ? +yaw.toFixed(3) : null, pitch_deg: +pitch.toFixed(3),
+      roll_deg: +roll.toFixed(3), zoom_pct: vis ? +base.z.toFixed(2) : null,
+      valid: vis ? ["trans", "yaw", "roll", "pitch", "zoom"] : ["roll", "pitch"],
+    },
+    tol: { trans_px: 8, yaw_deg: .5, pitch_deg: 1.5, roll_deg: 1.5, zoom_pct: 2 },
+    d: { confidence: +conf.toFixed(3), estimator: state === "MICROMETRY" ? "phase_correlation" : "orb_search",
+         ms_total: +(7.9 + gauss(1.3)).toFixed(2), fps: 30, temp_c: 61.2, throttled: "0x0" },
+  });
+}
+
+/* ================================================================== *
+ *  LOOP                                                              *
+ * ================================================================== */
+let last = performance.now(), tBlink = 0;
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, .1); last = now;
+  if (now - tBlink > 380) { blink = !blink; tBlink = now; }
+  sampleHud(now);
+  const a = 1 - Math.exp(-dt / TAU);
+  const lerp = (c, t) => (t === null || !isFinite(t)) ? c : c + (t - c) * a;
+  D.moveX = lerp(D.moveX, S.moveX); D.moveY = lerp(D.moveY, S.moveY);
+  D.yaw = lerp(D.yaw, S.yaw); D.pitch = lerp(D.pitch, S.pitch);
+  D.roll = lerp(D.roll, S.roll); D.zoom = lerp(D.zoom, S.zoom);
+  drawScreen(); present(); routeUI();
+  requestAnimationFrame(frame);
+}
+
+/* ================================================================== *
+ *  STARTUP                                                           *
+ * ================================================================== */
+function togglePanel(v) {
+  const p = $("panel");
+  p.hidden = v === undefined ? !p.hidden : !v;
+}
+
+
+/* ================================================================== *
+ *  MENUS AND COMMAND CHANNEL
+ *  Telemetry arrives over SSE from the bridge; the COMMANDS go over
+ *  HTTP straight to the Pi. A command happens once and losing it in
+ *  silence is not acceptable: that is why it does not travel over the
+ *  same UDP as the stream. And no screen opens on a click: it opens
+ *  when the packet's `state` says the Pi is in that state.
+ * ================================================================== */
+let PI = "";
+const PANTALLAS = ["m-main", "m-cap", "m-nom", "m-planos"];
+let localScr = null;          // sub-screen that only exists in the browser
+let ultEstado = "";
+let CAT = { arbol: {}, planos: [] };
+
+function piBase() {
+  let u = (PI || "").trim();
+  if (!u) return "";
+  if (!/^https?:\/\//.test(u)) u = "http://" + u;
+  return u.replace(/\/+$/, "");
+}
+function piEstado(t) { const e = $("pi-est"); if (e) e.textContent = t; }
+
+async function cmd(obj) {
+  const b = piBase();
+  if (!b) { fallo("no pi address: open the menu and set it"); return false; }
+  try {
+    const r = await fetch(b + "/cmd", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
+    if (!r.ok) {
+      // 400 unknown command = the Pi runs an old version or without --setup
+      fallo("the pi rejected the command (" + r.status + ")");
+      return false;
+    }
+    return true;
+  } catch (e) {
+    // A fetch that never arrives cannot tell "powered off" from "without
+    // --setup" from "firewall": all three give a bare TypeError. Say what is known.
+    fallo("cannot reach the pi: did you launch it with --setup?");
+    return false;
+  }
+}
+function fallo(t) { piEstado(t); avisoPantalla(t); }
+
+let RUTA = "";
+async function cargarCatalogo() {
+  const b = piBase(); if (!b) return;
+  try {
+    CAT = await (await fetch(b + "/shots")).json();
+    piEstado(CAT.planos.length + " shots on the Pi");
+    try {
+      RUTA = (await (await fetch(b + "/health")).json()).refs || "";
+      const t = RUTA ? "They are saved on the Pi, in " + RUTA : "";
+      $("pi-ruta").textContent = t; $("lista-ruta").textContent = t;
+    } catch (e) { /* the path is informative */ }
+  } catch (e) { piEstado("cannot reach the Pi: " + e.message); }
+}
+
+/* The Pi's warning goes in an inverted box, not in the small line: if a
+   capture is rejected, the operator has to find out without looking for it. */
+function verAviso(t) {
+  const e = $("m-aviso");
+  if (!e) return;
+  e.hidden = !t; e.textContent = t || "";
+}
+
+function verPantalla(id) {
+  PANTALLAS.forEach(x => { const e = $(x); if (e) e.hidden = x !== id; });
+  $("ui").classList.toggle("on", !!id);
+  // Without this, the focus stays inside a text field of the menu that is no
+  // longer visible, and the key handler (which ignores INPUTs on purpose, so it
+  // does not eat what you type) stops responding to ALL keys while you are
+  // guiding. It was that, not the key.
+  if (!id && document.activeElement && document.activeElement.tagName === "INPUT")
+    document.activeElement.blur();
+}
+
+function routeUI() {
+  const st = S.state || "";
+  const nuevo = st !== ultEstado;
+  if (nuevo) ultEstado = st;
+  if (st === "SETUP") {
+    if (nuevo) { localScr = null; cargarCatalogo(); }
+    verPantalla(localScr || "m-main");
+  } else if (st.indexOf("ARMANDO") === 0 || st === "DISPARO") {
+    $("cuenta").textContent = st === "DISPARO" ? "*" : (st.split("_")[1] || "3");
+    verPantalla("m-cap");
+  } else if (st === "NOMBRAR") {
+    if (nuevo) rellenarNombre();
+    verPantalla("m-nom");
+  } else {
+    localScr = null;
+    verPantalla(null);          // guiding: the instrument rules
+  }
+  if (nuevo) verAviso((S.raw && S.raw.nota) || "");
+}
+
+/* The datalists come from the catalogue: you pick one that already exists or
+   type a new one, without two different controls for the same thing. */
+function opciones(dl, arr) {
+  $(dl).innerHTML = arr.map(v => '<option value="' + v + '">').join("");
+}
+function rellenarNombre() { opciones("d-esc", Object.keys(CAT.arbol)); sincronizarNombre(); }
+function sincronizarNombre() {
+  const e = $("n-esc").value.trim() || "1";
+  const sec = CAT.arbol[e] || {};
+  opciones("d-sec", Object.keys(sec));
+  const q = $("n-sec").value.trim() || "A";
+  const planos = sec[q] || [];
+  opciones("d-pla", planos);
+  const n = planos.map(x => parseInt(x, 10)).filter(Number.isFinite);
+  const sug = String((n.length ? Math.max.apply(null, n) : 0) + 1);
+  const pl = $("n-pla");
+  if (!pl.dataset.tocado) pl.value = sug;
+  const nombre = "S" + e + "_" + q + "_" + (pl.value.trim() || sug) + ".png";
+  const choca = CAT.planos.some(x => x.file === nombre);
+  $("n-arch").textContent = nombre + (choca ? "   ·   ALREADY EXISTS, IT WILL BE OVERWRITTEN" : "");
+}
+
+/* delete and rename are resolved by the server on the spot and it returns the
+   new catalogue, so the list is repainted without waiting for a packet. */
+async function accion(obj) {
+  const b = piBase(); if (!b) return;
+  try {
+    const r = await fetch(b + "/cmd", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { verAviso("COULD NOT: " + (d.error || r.status)); return; }
+    if (d.catalogo) CAT = d.catalogo;
+    verAviso("");
+    pintarPlanos();
+  } catch (e) { verAviso("CANNOT REACH THE PI: " + e.message); }
+}
+
+function pintarPlanos() {
+  const b = piBase();
+  $("lista").innerHTML = CAT.planos.length ? CAT.planos.map(p =>
+    '<div class="plano"><img src="' + b + '/refs/' + p.file + '" alt="">' +
+    '<div><b>' + p.file.replace(/\.png$/, "") + '</b>' +
+    (p.imu ? "" : '<div class="nota">NO SAVED TILT</div>') +
+    '<div class="ren" hidden><input value="' + p.escena + '" data-k="escena">' +
+    '<input value="' + p.secuencia + '" data-k="secuencia">' +
+    '<input value="' + p.plano + '" data-k="plano">' +
+    '<button class="sec" data-ok="' + p.file + '">OK</button></div></div>' +
+    '<div class="acc"><button class="sec" data-guiar="' + p.file + '">Guide</button>' +
+    '<button class="sec" data-ren="' + p.file + '">Name</button>' +
+    '<button class="sec" data-del="' + p.file + '">Delete</button></div></div>'
+  ).join("") : '<p class="nota">No shot saved yet.</p>';
+
+  const L = $("lista");
+  L.querySelectorAll("[data-guiar]").forEach(bt =>
+    bt.addEventListener("click", () => cmd({ cmd: "guiar", file: bt.dataset.guiar })));
+  L.querySelectorAll("[data-ren]").forEach(bt =>
+    bt.addEventListener("click", () => {
+      const caja = bt.closest(".plano").querySelector(".ren");
+      caja.hidden = !caja.hidden;
+    }));
+  L.querySelectorAll("[data-ok]").forEach(bt =>
+    bt.addEventListener("click", () => {
+      const v = {};
+      bt.closest(".ren").querySelectorAll("input").forEach(i =>
+        v[i.dataset.k] = i.value.trim());
+      accion({ cmd: "renombrar", file: bt.dataset.ok,
+               nuevo: "S" + v.escena + "_" + v.secuencia + "_" + v.plano + ".png" });
+    }));
+  /* Delete in two taps instead of a confirm(): a modal browser dialog blocks
+     the whole page, and this reads just as clearly. */
+  L.querySelectorAll("[data-del]").forEach(bt =>
+    bt.addEventListener("click", () => {
+      if (bt.dataset.armado) { accion({ cmd: "borrar", file: bt.dataset.del }); return; }
+      bt.dataset.armado = "1"; bt.textContent = "Sure?";
+      setTimeout(() => { if (bt.isConnected) { bt.dataset.armado = ""; bt.textContent = "Delete"; } }, 4000);
+    }));
+}
+
+/* ESC = one step back, and only one:
+     guiding          -> stops and back to the menu (the Pi decides, not the key)
+     shot list        -> to the main menu
+     naming           -> does NOTHING. There is a capture in memory there that
+                         would be lost, and discarding it has its own button.  */
+async function salir() {
+  const st = S.state || "";
+  if (st === "NOMBRAR" || st.indexOf("ARMANDO") === 0 || st === "DISPARO") {
+    avisoPantalla("there is an unsaved capture");
+    return;
+  }
+  if (st === "SETUP") { if (localScr) { localScr = null; verPantalla("m-main"); } return; }
+  avisoPantalla("stopping ...");
+  if (await cmd({ cmd: "parar" })) avisoPantalla("stopping ...");
+}
+
+function initMenus() {
+  const q = new URLSearchParams(location.search).get("pi");
+  try { PI = q || localStorage.getItem("tfg.pi") || ""; } catch (e) { PI = q || ""; }
+  $("pi-url").value = PI;
+  $("pi-url").addEventListener("change", () => {
+    PI = $("pi-url").value.trim();
+    try { localStorage.setItem("tfg.pi", PI); } catch (e) {}
+    $("pi-url").blur();
+    cargarCatalogo();
+  });
+  $("b-cap").addEventListener("click", () => cmd({ cmd: "capturar" }));
+  $("b-planos").addEventListener("click", () => {
+    localScr = "m-planos"; pintarPlanos(); verPantalla("m-planos"); });
+  $("b-volver").addEventListener("click", () => { localScr = null; verPantalla("m-main"); });
+  $("b-retry").addEventListener("click", () => cmd({ cmd: "reintentar" }));
+  $("b-desc").addEventListener("click", () => cmd({ cmd: "descartar" }));
+  $("b-guardar").addEventListener("click", () => cmd({ cmd: "guardar",
+    escena: $("n-esc").value.trim() || "1",
+    secuencia: $("n-sec").value.trim() || "A",
+    plano: $("n-pla").value.trim() || "1" }));
+  ["n-esc", "n-sec"].forEach(id => $(id).addEventListener("input", () => {
+    $("n-pla").dataset.tocado = ""; sincronizarNombre(); }));
+  $("n-pla").addEventListener("input", () => {
+    $("n-pla").dataset.tocado = "1"; sincronizarNombre(); });
+  if (PI) cargarCatalogo();
+}
+
+function init() {
+  resize();
+  addEventListener("resize", resize);
+
+  $("sliders").addEventListener("input", () => {
+    sim.running = false; $("bRun").setAttribute("aria-pressed", "false"); syncOut();
+  });
+  syncOut();
+
+  $("bRun").addEventListener("click", () => {
+    sim.running = !sim.running;
+    $("bRun").setAttribute("aria-pressed", String(sim.running));
+    if (sim.running) {
+      const v = rd();
+      Object.assign(sim, { dx: v.dx || -260, dy: v.dy || 150, yaw: v.yaw || -6,
+                           pitch: v.pitch || 6, roll: v.roll || -11, z: v.z || -9 });
+      if (Math.hypot(sim.dx, sim.dy) < 40)
+        Object.assign(sim, { dx: -260, dy: 150, yaw: -6, pitch: 6, roll: -11, z: -9 });
+    }
+  });
+  $("bLost").addEventListener("click", () => {
+    sim.lost = !sim.lost; $("bLost").setAttribute("aria-pressed", String(sim.lost)); });
+  $("bFreeze").addEventListener("click", () => {
+    frozen = !frozen; $("bFreeze").setAttribute("aria-pressed", String(frozen)); });
+  $("bZero").addEventListener("click", () => {
+    sim.running = false; $("bRun").setAttribute("aria-pressed", "false");
+    $("sDx").value = 0; $("sDy").value = 0; $("sYaw").value = 0;
+    $("sPitch").value = 0; $("sRoll").value = 0; $("sZoom").value = 0; syncOut(); });
+
+  addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT") return;
+    const k = e.key.toLowerCase();
+    if (k === "c") togglePanel();
+    else if (k === "f") { FORM = FORM === "ball" ? "ret" : "ball"; save(); }
+    else if (k === "g") { SHOW_GRID = !SHOW_GRID; save(); }
+    else if (k === "+" || k === "=") { PIXEL = clamp(PIXEL + 1, 2, 10); resize(); save(); }
+    else if (k === "-") { PIXEL = clamp(PIXEL - 1, 2, 10); resize(); save(); }
+    else if (k === "e" || k === "escape" || k === "m") salir();
+    else return;
+    e.preventDefault();
+  });
+
+  try {
+    const st = JSON.parse(localStorage.getItem("tfg.px") || "{}");
+    if (st.FORM) FORM = st.FORM;
+    if (st.PIXEL) { PIXEL = st.PIXEL; resize(); }
+    if (st.SHOW_GRID !== undefined) SHOW_GRID = st.SHOW_GRID;
+  } catch (e) { /* no storage */ }
+
+  initMenus();
+  connect();
+  setInterval(tickLocal, 33);
+  requestAnimationFrame(frame);
+}
+function save() {
+  try { localStorage.setItem("tfg.px", JSON.stringify({ FORM, PIXEL, SHOW_GRID })); }
+  catch (e) { /* no storage */ }
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+else init();
+
+})();
+</script>
+</body>
+</html>
