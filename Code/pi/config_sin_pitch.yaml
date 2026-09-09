@@ -1,9 +1,0 @@
-# Arm B of the pitch-subtraction A/B.
-#
-# Config.from_yaml OVERLAYS on top of the defaults in config.py (it does
-# cls(**data), so anything not here falls back to its default). This file
-# changes ONE single variable and nothing else: same K, same thresholds, same
-# camera. Run the same scene and the same reference with and without this
-# --config and the difference is attributable to the compensation, not to the
-# environment.
-pitch_compensation: false
