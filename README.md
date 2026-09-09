@@ -35,5 +35,5 @@ red.py: Handles all communication. It sends the captured data to your laptop, ru
 
 main.py: Manages the main loop, and makes sure all the different parts hand information to each other in the right order.
 
-On the Laptop (PC)
+# On the Laptop (PC)
 puente.py: Receives updates from the device over the network and feeds them into your main visual display in the web browser (operator_ui_web.html).
